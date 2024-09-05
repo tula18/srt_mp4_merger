@@ -187,7 +187,7 @@ def handle_interrupt(output_file, auto_delete=False):
                 os.remove(output_file)
                 log(f"Deleted partial output file: {output_file}", level="success")
 
-def mix_mp4_srt(mp4_file, srt_file, folder_path, output_folder="output", output_file=None, auto_delete=False, manual_encoding=None):
+def mix_mp4_srt(mp4_file, srt_file, folder_path="", output_folder="output", output_file=None, auto_delete=False, manual_encoding=None):
     """Mix the MP4 video with SRT subtitles using FFmpeg with options for custom output, manual encoding, and file overwrite."""
     try:
         # Convert the SRT file to UTF-8 if it's not already
