@@ -13,7 +13,7 @@ init(autoreset=True)
 VERBOSE = False
 SILENT = False
 
-def log(message, level="info"):
+def log(message, level="info", end="\n"):
     """Log messages based on verbosity and silent mode."""
     if SILENT:
         return
@@ -26,7 +26,15 @@ def log(message, level="info"):
     }.get(level, Fore.CYAN)
     
     if VERBOSE or level in ["error", "success"]:
-        print(color + message + Style.RESET_ALL)
+        print(color + message + Style.RESET_ALL, end=end)
+        
+def ensure_folder_exists(folder_path):
+    """Ensure that the output folder exists, creating it if necessary."""
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        log(f"Created output folder: {folder_path}", level="success")
+    else:
+        log(f"Output folder already exists: {folder_path}", level="info")
 
 def detect_encoding(file_path, manual_encoding=None):
     """Detect the encoding of the SRT file using chardet or a manually specified encoding."""
@@ -139,7 +147,7 @@ def parse_ffmpeg_progress(line, total_duration, start_time):
         formatted_video_time_remaining = format_seconds(video_time_remaining)
         formatted_runtime_remaining = format_seconds(runtime_remaining)
 
-        log(f"Video Progress: {time_match.group(1)} | Video Time Remaining: {formatted_video_time_remaining} | Estimated Runtime Remaining: {formatted_runtime_remaining}")
+        log(f"Video Progress: {time_match.group(1)} | Video Time Remaining: {formatted_video_time_remaining} | Estimated Runtime Remaining: {formatted_runtime_remaining}", end="\r", level="success")
 
 def display_file_info(mp4_file, srt_file, video_metadata, subtitle_count, srt_encoding):
     """Display information about the video and subtitle files."""
@@ -167,24 +175,21 @@ def handle_interrupt(output_file, auto_delete=False):
             os.remove(output_file)
             log(f"Deleted partial output file: {output_file}", level="success")
         else:
-            user_choice = input(f"The output file {output_file} exists. Do you want to delete it? (y/n): ")
-            if user_choice.lower() == 'y':
+            try:
+                user_choice = input(f"The output file {output_file} exists. Do you want to delete it? (y/n): ")
+                if user_choice.lower() == 'y':
+                    os.remove(output_file)
+                    log(f"Deleted partial output file: {output_file}", level="success")
+                else:
+                    log(f"Partial output file kept: {output_file}", level="warn")
+            except KeyboardInterrupt:
+                log(f"\n\nProcess interrupted!", level="error")
                 os.remove(output_file)
                 log(f"Deleted partial output file: {output_file}", level="success")
-            else:
-                log(f"Partial output file kept: {output_file}", level="warn")
 
-def mix_mp4_srt(mp4_file, srt_file, output_file=None, auto_delete=False, manual_encoding=None):
+def mix_mp4_srt(mp4_file, srt_file, folder_path, output_folder="output", output_file=None, auto_delete=False, manual_encoding=None):
     """Mix the MP4 video with SRT subtitles using FFmpeg with options for custom output, manual encoding, and file overwrite."""
     try:
-        # Check if MP4 and SRT files exist
-        if not os.path.exists(mp4_file):
-            log(f"MP4 file not found: {mp4_file}", level="error")
-            raise FileNotFoundError(f"MP4 file not found: {mp4_file}")
-        if not os.path.exists(srt_file):
-            log(f"SRT file not found: {srt_file}", level="error")
-            raise FileNotFoundError(f"SRT file not found: {srt_file}")
-
         # Convert the SRT file to UTF-8 if it's not already
         utf8_srt_file = convert_to_utf8_if_needed(srt_file, manual_encoding)
         
@@ -195,9 +200,17 @@ def mix_mp4_srt(mp4_file, srt_file, output_file=None, auto_delete=False, manual_
             log(f"File format: {file_extension} not supported", level="error")
             raise TypeError(f"File format: {file_extension} not supported")
 
-        # Prepare output file
+        output_folder_final = os.path.join(folder_path, output_folder)
+        print(output_folder_final)
+        # Create output folder if it doesn't exist
+        ensure_folder_exists(output_folder_final)
+
+        # Prepare output file path
         if not output_file:
             output_file = f"{filename}-with_subtitles{file_extension}"
+        output_file = os.path.join(output_folder_final, os.path.basename(output_file))  # Correct the output file path
+            
+        log(f"Output file: {output_file}", level="info")
 
         # Check if output MP4 file exists and prompt for deletion if not in auto-delete mode
         if os.path.exists(output_file):
@@ -205,13 +218,17 @@ def mix_mp4_srt(mp4_file, srt_file, output_file=None, auto_delete=False, manual_
                 os.remove(output_file)
                 log(f"Deleted existing output file: {output_file}", level="success")
             else:
-                user_choice = input(f"Output file {output_file} already exists. Do you want to delete it? (y/n): ")
-                if user_choice.lower() == 'y':
+                try:
+                    user_choice = input(f"The output file {output_file} exists. Do you want to delete it? (y/n): ")
+                    if user_choice.lower() == 'y':
+                        os.remove(output_file)
+                        log(f"Deleted partial output file: {output_file}", level="success")
+                    else:
+                        log(f"Partial output file kept: {output_file}", level="warn")
+                except KeyboardInterrupt:
+                    log(f"\n\nProcess interrupted!", level="error")
                     os.remove(output_file)
-                    log(f"Deleted existing output file: {output_file}", level="success")
-                else:
-                    log(f"Exiting without making any changes.", level="warn")
-                    return
+                    log(f"Deleted partial output file: {output_file}", level="success")
 
         # Get the video metadata
         video_metadata = get_video_metadata(mp4_file)
@@ -256,19 +273,51 @@ def mix_mp4_srt(mp4_file, srt_file, output_file=None, auto_delete=False, manual_
     except Exception as e:
         log(f"An unexpected error occurred: {e}", level="error")
 
+def process_tv_series(folder_path, output_folder, auto_delete=False, manual_encoding=None):
+    """Process multiple MP4 and SRT files in a folder."""
+    try:
+        # Get a list of MP4 and SRT files in the folder
+        mp4_files = [f for f in os.listdir(folder_path) if f.endswith('.mp4')]
+        srt_files = [f for f in os.listdir(folder_path) if f.endswith('.srt')]
+
+        if not mp4_files or not srt_files:
+            log(f"No MP4 or SRT files found in {folder_path}.", level="error")
+            return
+
+        for mp4_file in mp4_files:
+            # Try to find a matching SRT file based on episode/filename
+            base_name = os.path.splitext(mp4_file)[0]
+            matching_srt = next((srt for srt in srt_files if base_name in srt), None)
+
+            if matching_srt:
+                log(f"\nProcessing {mp4_file} with {matching_srt}...\n", level="info")
+                mp4_path = os.path.join(folder_path, mp4_file)
+                srt_path = os.path.join(folder_path, matching_srt)
+                mix_mp4_srt(mp4_path, srt_path, folder_path=folder_path, output_folder=output_folder, auto_delete=auto_delete, manual_encoding=manual_encoding)
+            else:
+                log(f"No matching SRT file found for {mp4_file}", level="warn")
+
+    except Exception as e:
+        log(f"Error processing TV series: {e} {os.getcwd()}", level="error")
+
 # Example usage with sys.argv
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print(f"{Fore.RED}Usage: python mix_mp4_srt.py <mp4_file> <srt_file> [--output <output_file>] [--encoding <encoding>] [--overwrite] [--verbose] [--silent]")
+        print(f"{Fore.RED}Usage: python mix_mp4_srt.py <mp4_file> <srt_file> [--output <output_file>] [--encoding <encoding>] [--overwrite] [--verbose] [--silent] [--tv <folder_path>]")
         sys.exit(1)
 
     mp4_file = sys.argv[1]
     srt_file = sys.argv[2]
 
     # Parsing optional arguments
+    output_folder = "output"
     output_file = None
     auto_delete = False
     manual_encoding = None
+    folder_path = None
+    
+    if "--output-folder" in sys.argv:
+        output_folder = sys.argv[sys.argv.index("--output-folder") + 1]
 
     if "--output" in sys.argv:
         output_file = sys.argv[sys.argv.index("--output") + 1]
@@ -286,6 +335,14 @@ if __name__ == "__main__":
         SILENT = True
 
     try:
-        mix_mp4_srt(mp4_file, srt_file, output_file=output_file, auto_delete=auto_delete, manual_encoding=manual_encoding)
+        # If --tv is passed, process a folder
+        if "--tv" in sys.argv:
+            folder_path = sys.argv[sys.argv.index("--tv") + 1]
+            process_tv_series(folder_path, output_folder=output_folder, auto_delete=auto_delete, manual_encoding=manual_encoding)
+        else:
+            # Process a single MP4 and SRT file
+            mp4_file = sys.argv[1]
+            srt_file = sys.argv[2]
+            mix_mp4_srt(mp4_file, srt_file, output_folder=output_folder, output_file=output_file, auto_delete=auto_delete, manual_encoding=manual_encoding)
     except Exception as e:
         log(f"Failed to process files: {e}", level="error")

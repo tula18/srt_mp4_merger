@@ -88,6 +88,7 @@ python mix_mp4_srt.py <mp4_file> <srt_file> [options]
 - `--overwrite`: Automatically delete any existing output file without prompting.
 - `--verbose`: Display detailed logs for debugging purposes.
 - `--silent`: Suppress all output except for errors.
+- `--tv <folder_path>`: Process a folder of MP4 and SRT files (for TV series).
 
 ### Examples
 
